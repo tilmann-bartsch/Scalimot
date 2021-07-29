@@ -1,21 +1,8 @@
 /* Scalimot. Scala implemenation of LoLiMoT (Local Linear Model Tree)
- *
- * To-Do: 
- *    - Final model is not continuous in input data because different linear
- *      models are stuck together. The model can be made continuous by 
- *      changingthe type BranchData = DenseVector[Double] => Dir to    
- *             BranchData = DenseVector[Double] => (Double, Double)
- *      Is f a function of type BranchData and vec a DenseVector[Double] and
- *      (z1, z2) = f(vec) then z1+z2 should be one and z1, z2 describe the 
- *      'affiliation' of vec to left submodel or right submodel.
- *      
- *      Now the function findAndPredict should be adapted such that
- *           findAndPredict(Branch(model1, model2), vec) = 
- *               z1*findAndPredict(model1, vec) + z2*findAndPredict(model2, vec)
- */
+*/
 
 import breeze.linalg.{DenseVector, DenseMatrix, Axis, sum, max, min}
-import breeze.numerics.{pow, sqrt}
+import breeze.numerics.{pow, sqrt, exp}
 import breeze.stats.distributions.Uniform
 
 object Scalimot extends App {
@@ -123,20 +110,16 @@ object Scalimot extends App {
     * Maximum and sum provide the maximum and sum of the q values of models at all leafs
     * respectively.
     */
-    sealed trait Dir
-    case class ToLeft() extends Dir
-    case class ToRight() extends Dir    
-    type BranchData = DenseVector[Double] => Dir    
+    type BranchData = DenseVector[Double] => (Double, Double)    
     type LeafData = Model
     type ModelTree = Tree[LeafData, BranchData]
     def findAndPredict(tree: ModelTree, vec: DenseVector[Double]): Double =
       tree match {
         case Leaf(model) => model.predict(vec)
-        case Branch(f, t1, t2) =>
-          f(vec) match {
-            case ToLeft() => findAndPredict(t1, vec)
-            case ToRight() => findAndPredict(t2, vec)
-          }
+        case Branch(f, t1, t2) => {
+          val (d1, d2) = f(vec)
+          d1*findAndPredict(t1, vec) + d2*findAndPredict(t2, vec)
+        }
       }
     def maximum(t: ModelTree): Double = 
             t.fold[Double](a => a.q)(_ max _)
@@ -173,15 +156,15 @@ object Scalimot extends App {
           val max_r = maximum(right)
           if (max_l > max_r) {
             var vectors = 
-                for (i <- 0 until local_data.rows 
-                     if f(local_data(i, 1 to -1).t).isInstanceOf[ToLeft]) 
+                for (i <- 0 until local_data.rows
+                     if f(local_data(i, 1 to -1).t)._1 > 0.5)
                         yield local_data(i,::).t.toDenseMatrix
             val filt_data = DenseMatrix.vertcat(vectors:_*)            
             Branch(f, go(left, filt_data), right) }
           else {
             var vectors = 
                 for (i <- 0 until local_data.rows 
-                     if f(local_data(i, 1 to -1).t).isInstanceOf[ToRight]) 
+                     if f(local_data(i, 1 to -1).t)._2 > 0.5)
                         yield local_data(i,::).t.toDenseMatrix
             val filt_data = DenseMatrix.vertcat(vectors:_*)
             Branch(f, left, go(right, filt_data)) }
@@ -212,9 +195,12 @@ object Scalimot extends App {
             
             // Construct new ModelTree new_t = Branch(f, mod1, mod2) as a 
             // replacment candidate of the current leaf ld.
-            val f = (v: DenseVector[Double]) => 
-                if (v(feature_dim) < threshold) ToLeft()
-                else ToRight()
+            val b = threshold; val s = 0.001
+            val f = (v: DenseVector[Double]) => {
+                val x = v(feature_dim)
+                ( 1 / (1 + exp((x-b)/s)) , 1 / (1 + exp(-(x-b)/s)) )
+            }
+            
             val new_mod_l = baseModel(local_data(inds_left, ::).toDenseMatrix)
             val new_mod_r = baseModel(local_data(inds_right, ::).toDenseMatrix)
             val new_t = Branch(f, Leaf(new_mod_l), Leaf(new_mod_r))
@@ -231,7 +217,7 @@ object Scalimot extends App {
           // Create init = Branch(f,m1,m2) representing empty Model with sum of q values Infinity
           val mod1 = emptyModel()
           val mod2 = emptyModel()
-          val init = Branch((_: DenseVector[Double]) => ToRight(), Leaf(mod1), Leaf(mod2))
+          val init = Branch((_: DenseVector[Double]) => (0.0,1.0), Leaf(mod1), Leaf(mod2))
           // local_data.cols = 1 + number of features, such that in recursive call of 
           // findBestSplit: feature_dim = ...,2,1,0
           findBestSplit(init, local_data.cols - 2)
@@ -252,8 +238,8 @@ object Scalimot extends App {
   /**** Simple Test ****/
   
   // Test data
-  val features: Int = 3
-  val data_points: Int = 1000
+  val features: Int = 2
+  val data_points: Int = 10000
   // Create matrix. Every row is data point. First column contains
   // labels. Other columns contain features.
   var data = DenseMatrix.zeros[Double](data_points, features+1)
@@ -263,11 +249,22 @@ object Scalimot extends App {
   // Set label as the quadratic sum of the features
   data(::, 0) := sum(pow(data(::, 1 to -1), 2), Axis._1) + 0.0001 * DenseVector.rand(data_points, dist)
   
-  
   // Model
-  for (splits <- 0 to 8){
+  for (splits <- 0 to 2){
     val mod = makeModel(data, linearRegression, splits)
     println("Splits: %d, q = %e".format(splits, mod.q/data.rows))
     println()
+  }
+  
+  
+  val splits = 4
+  val mod = makeModel(data, linearRegression, splits)  
+  print("Inference for Model with:  ")
+  println("Splits: %d, q = %e".format(splits, mod.q/data.rows))
+  println("Predicions, True Value, Features")
+  for (_ <- 0 to 5){
+    val x = DenseVector.rand(features, dist)
+    val y = mod.predict(x)
+    println("%10.5f, %10.5f, %s".format(y, sum(pow(x,2)), x))
   }
 }
