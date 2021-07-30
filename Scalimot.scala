@@ -18,7 +18,7 @@ object Scalimot extends App {
   case class Model(q: Double, predict: DenseVector[Double] => Double)
   def emptyModel(): Model = Model(Double.PositiveInfinity, _ => Double.NaN)
   
- /* Perform linear regression on data and return a fitted Model.
+ /** Perform linear regression on data and return a fitted Model.
   *
   *  @param data Breeze DenseMatrix[Double] containing data points. First
   *         column contains labels. Other columsn contain features.
@@ -72,14 +72,14 @@ object Scalimot extends App {
     Model(q, (inp) => a(0) - (-a(1 to - 1) dot inp)) // Return Model
   }
   
- /* Make a model using the Local Model Tree concept.
+ /** Make a model using the Local Model Tree concept.
   *
   * @param data Breeze DenseMatrix[Double] object containg the data
   *        (first column: label, other columns: features
   *
   * @param baseModel Function turning input data to a model. The model
   *        construction of this is used as the models at the leaf of the tree.
-  * @param splits: 
+  * @param splits:  Number of of 'model split' to perform
   *
   * @return Instance of class Model obtained by LoLiMoT algorithm
   */
@@ -126,7 +126,7 @@ object Scalimot extends App {
     def sum(t: ModelTree): Double = 
             t.fold[Double](a => a.q)(_ + _)
       
-   /* Split Leaf of a ModelTree multiple times by 
+   /** Split Leaf of a ModelTree multiple times by 
     *   1. Searching for the leaf containing the model which has
     *      the highest q value.
     *   2. Replacing that leaf by a Branch(f, Leaf(mod1), Leaf(mod2))
@@ -249,14 +249,14 @@ object Scalimot extends App {
   // Set label as the quadratic sum of the features
   data(::, 0) := sum(pow(data(::, 1 to -1), 2), Axis._1) + 0.0001 * DenseVector.rand(data_points, dist)
   
-  // Model
+  // Test different amount of model splits
   for (splits <- 0 to 2){
     val mod = makeModel(data, linearRegression, splits)
     println("Splits: %d, q = %e".format(splits, mod.q/data.rows))
     println()
   }
   
-  
+  // Test model prediction
   val splits = 4
   val mod = makeModel(data, linearRegression, splits)  
   print("Inference for Model with:  ")
